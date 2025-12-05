@@ -1,0 +1,39 @@
+import { Link, Route, Routes } from 'react-router-dom';
+import BuilderPage from './pages/BuilderPage';
+import PublicFormPage from './pages/PublicFormPage';
+import PublicFormsPage from './pages/PublicFormsPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import AdminProtectedRoute from './pages/AdminProtectedRoute';
+import './App.css';
+
+const App = () => {
+  return (
+    <div className="app-shell">
+      <nav className="site-nav">
+        <Link to="/" className="logo">
+          Global ServiceX
+        </Link>
+        <div className="nav-links">
+          <a href="https://globalservicex.in/contact" target="_blank" rel="noreferrer" className="contact-pill">
+            Contact
+          </a>
+        </div>
+      </nav>
+      <Routes>
+        <Route path="/" element={<PublicFormsPage />} />
+        <Route path="/gsxi/login" element={<AdminLoginPage />} />
+        <Route
+          path="/gsxi"
+          element={
+            <AdminProtectedRoute>
+              <BuilderPage />
+            </AdminProtectedRoute>
+          }
+        />
+        <Route path="/form/:slug" element={<PublicFormPage />} />
+      </Routes>
+    </div>
+  );
+};
+
+export default App;

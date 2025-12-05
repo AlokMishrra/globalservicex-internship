@@ -1,0 +1,68 @@
+.admin-home-page {
+    min-height: 100vh;
+    background-color: #e0e0e0;
+    /* Gray background as shown in image */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 4rem;
+    font-family: 'Inter', sans-serif;
+}
+
+.admin-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 4rem;
+    text-align: center;
+}
+
+.admin-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 3rem;
+    max-width: 900px;
+    width: 90%;
+}
+
+.admin-card {
+    background-color: #e0e0e0;
+    /* Matching background */
+    border: 2px solid #333;
+    /* Dark border */
+    border-radius: 4px;
+    padding: 3rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 4px 4px 0px #333;
+    /* Brutalist shadow style */
+}
+
+.admin-card:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px #333;
+    background-color: #f5f5f5;
+}
+
+.admin-card:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px #333;
+}
+
+.admin-card h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #000;
+    margin: 0;
+    text-align: center;
+}
+
+@media (max-width: 768px) {
+    .admin-grid {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+}
