@@ -5,62 +5,211 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { db } from '../services/db';
 import type { PublishedForm, FormSubmission } from '../types';
-import './AdminHomePage.css';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import './AdminDashboard.css';
+
+type TabType = 'dashboard' | 'forms' | 'submissions';
 
 const AdminSubmissionsPage = () => {
     const navigate = useNavigate();
+
+    // Tab state
+    const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+
+    // Data state
     const [forms, setForms] = useState<PublishedForm[]>([]);
-    const [selectedForm, setSelectedForm] = useState<PublishedForm | null>(null);
-    const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
+    const [allSubmissions, setAllSubmissions] = useState<FormSubmission[]>([]);
+
+    // Forms tab state
+    const [editingForm, setEditingForm] = useState<PublishedForm | null>(null);
+    const [showEditModal, setShowEditModal] = useState(false);
+
+    // Submissions tab state
+    const [selectedFormId, setSelectedFormId] = useState<string>('');
+    const [filteredSubmissions, setFilteredSubmissions] = useState<FormSubmission[]>([]);
     const [exportMenuOpen, setExportMenuOpen] = useState(false);
+    const [viewingSubmission, setViewingSubmission] = useState<FormSubmission | null>(null);
+    const [editValues, setEditValues] = useState<Record<string, string>>({});
+
+    // Confirm dialog state
+    const [confirmDialog, setConfirmDialog] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        type: 'danger' | 'warning' | 'info';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+        type: 'warning'
+    });
+
+    // Statistics
+    const [stats, setStats] = useState({
+        totalForms: 0,
+        publishedForms: 0,
+        totalSubmissions: 0,
+        recentSubmissions: 0,
+    });
 
     useEffect(() => {
-        const fetchForms = async () => {
-            try {
-                const data = await db.getAllForms();
-                setForms(data);
-            } catch (error) {
-                console.error('Failed to load forms:', error);
-            }
-        };
-        fetchForms();
+        loadData();
     }, []);
 
-    const handleViewSubmissions = async (form: PublishedForm) => {
-        setSelectedForm(form);
+    useEffect(() => {
+        if (selectedFormId) {
+            const filtered = allSubmissions.filter(s => s.formId === selectedFormId);
+            setFilteredSubmissions(filtered);
+        } else {
+            setFilteredSubmissions([]);
+        }
+    }, [selectedFormId, allSubmissions]);
+
+    const loadData = async () => {
         try {
-            const data = await db.getSubmissions(form.id);
-            setSubmissions(data);
+            const loadedForms = await db.getAllForms();
+            const loadedSubmissions = await db.getSubmissions();
+
+            setForms(loadedForms);
+            setAllSubmissions(loadedSubmissions);
+
+            // Calculate statistics
+            const now = new Date();
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            const recentCount = loadedSubmissions.filter(
+                s => new Date(s.submittedAt) > oneDayAgo
+            ).length;
+
+            setStats({
+                totalForms: loadedForms.length,
+                publishedForms: loadedForms.filter(f => f.status === 'published').length,
+                totalSubmissions: loadedSubmissions.length,
+                recentSubmissions: recentCount,
+            });
         } catch (error) {
-            console.error('Failed to load submissions:', error);
+            console.error('Failed to load data:', error);
         }
     };
 
-    const handleExportCSV = () => {
-        if (!selectedForm || submissions.length === 0) return;
+    // Form Management Functions
+    const handleEditForm = (form: PublishedForm) => {
+        setEditingForm(form);
+        setShowEditModal(true);
+    };
 
-        const headers = selectedForm.fields.map((field) => field.label);
-        const rows = submissions.map((submission) =>
-            selectedForm.fields.map((field) => JSON.stringify(submission.values[field.id] || '')),
+    const handleSaveForm = async () => {
+        if (!editingForm) return;
+
+        try {
+            await db.updateForm(editingForm.id, editingForm);
+            await loadData();
+            setShowEditModal(false);
+            setEditingForm(null);
+        } catch (error) {
+            console.error('Failed to save form:', error);
+            alert('Failed to save form');
+        }
+    };
+
+    const handleToggleStatus = async (form: PublishedForm) => {
+        const newStatus = form.status === 'published' ? 'unpublished' : 'published';
+        try {
+            await db.updateForm(form.id, { status: newStatus });
+            await loadData();
+        } catch (error) {
+            console.error('Failed to update status:', error);
+            alert('Failed to update form status');
+        }
+    };
+
+    const handleDeleteForm = async (id: string) => {
+        setConfirmDialog({
+            isOpen: true,
+            title: 'Delete Form',
+            message: 'Are you sure you want to delete this form? This action cannot be undone.',
+            type: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                try {
+                    await db.deleteForm(id);
+                    await loadData();
+                } catch (error) {
+                    console.error('Failed to delete form:', error);
+                    alert('Failed to delete form');
+                }
+            }
+        });
+    };
+
+    // Submission Functions
+    const handleViewSubmission = (submission: FormSubmission) => {
+        setViewingSubmission(submission);
+        setEditValues(submission.values);
+    };
+
+    const handleSaveSubmission = async () => {
+        if (!viewingSubmission) return;
+
+        try {
+            await db.updateSubmission(viewingSubmission.id, editValues);
+            await loadData();
+            setViewingSubmission(null);
+        } catch (error) {
+            console.error('Failed to update submission:', error);
+            alert('Failed to update submission');
+        }
+    };
+
+    const handleDeleteSubmission = async (id: string) => {
+        setConfirmDialog({
+            isOpen: true,
+            title: 'Delete Submission',
+            message: 'Are you sure you want to delete this submission?',
+            type: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                try {
+                    await db.deleteSubmission(id);
+                    await loadData();
+                } catch (error) {
+                    console.error('Failed to delete submission:', error);
+                    alert('Failed to delete submission');
+                }
+            }
+        });
+    };
+
+    // Export Functions
+    const getSelectedForm = () => forms.find(f => f.id === selectedFormId);
+
+    const handleExportCSV = () => {
+        const form = getSelectedForm();
+        if (!form || filteredSubmissions.length === 0) return;
+
+        const headers = form.fields.map(field => field.label);
+        const rows = filteredSubmissions.map(submission =>
+            form.fields.map(field => JSON.stringify(submission.values[field.id] || ''))
         );
-        const csvContent = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+        const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${selectedForm.slug}-submissions.csv`;
+        link.download = `${form.slug}-submissions.csv`;
         link.click();
         URL.revokeObjectURL(url);
         setExportMenuOpen(false);
     };
 
     const handleExportExcel = () => {
-        if (!selectedForm || submissions.length === 0) return;
+        const form = getSelectedForm();
+        if (!form || filteredSubmissions.length === 0) return;
 
-        // headers are automatically generated from keys
-        const data = submissions.map((submission) => {
+        const data = filteredSubmissions.map(submission => {
             const row: Record<string, string> = { Date: new Date(submission.submittedAt).toLocaleString() };
-            selectedForm.fields.forEach((field) => {
+            form.fields.forEach(field => {
                 row[field.label] = typeof submission.values[field.id] === 'object'
                     ? JSON.stringify(submission.values[field.id])
                     : String(submission.values[field.id] || '');
@@ -71,18 +220,19 @@ const AdminSubmissionsPage = () => {
         const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Submissions");
-        XLSX.writeFile(wb, `${selectedForm.slug}-submissions.xlsx`);
+        XLSX.writeFile(wb, `${form.slug}-submissions.xlsx`);
         setExportMenuOpen(false);
     };
 
     const handleExportPDF = () => {
-        if (!selectedForm || submissions.length === 0) return;
+        const form = getSelectedForm();
+        if (!form || filteredSubmissions.length === 0) return;
 
         const doc = new jsPDF();
-        const headers = [['Date', ...selectedForm.fields.map((field) => field.label)]];
-        const data = submissions.map((submission) => [
+        const headers = [['Date', ...form.fields.map(field => field.label)]];
+        const data = filteredSubmissions.map(submission => [
             new Date(submission.submittedAt).toLocaleString(),
-            ...selectedForm.fields.map((field) =>
+            ...form.fields.map(field =>
                 typeof submission.values[field.id] === 'object'
                     ? JSON.stringify(submission.values[field.id])
                     : String(submission.values[field.id] || '')
@@ -94,101 +244,563 @@ const AdminSubmissionsPage = () => {
             body: data,
         });
 
-        doc.save(`${selectedForm.slug}-submissions.pdf`);
+        doc.save(`${form.slug}-submissions.pdf`);
         setExportMenuOpen(false);
     };
 
-    if (selectedForm) {
-        return (
-            <div className="admin-home-page" style={{ justifyContent: 'flex-start', background: '#f8f9fa' }}>
-                <div style={{ width: '100%', maxWidth: '1200px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', padding: '0 1rem' }}>
-                    <button onClick={() => setSelectedForm(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}>← Back to Forms</button>
-                    <h1 className="admin-title" style={{ margin: 0, fontSize: '1.5rem' }}>{selectedForm.name} Submissions</h1>
-
-                    <div style={{ position: 'relative' }}>
-                        <button
-                            onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                            disabled={submissions.length === 0}
-                            style={{ padding: '0.5rem 1rem', background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                        >
-                            Export ▼
-                        </button>
-                        {exportMenuOpen && (
-                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '0.5rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', zIndex: 10, minWidth: '150px' }}>
-                                <button onClick={handleExportCSV} style={{ display: 'block', width: '100%', padding: '0.5rem 1rem', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}>CSV</button>
-                                <button onClick={handleExportExcel} style={{ display: 'block', width: '100%', padding: '0.5rem 1rem', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}>Excel</button>
-                                <button onClick={handleExportPDF} style={{ display: 'block', width: '100%', padding: '0.5rem 1rem', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer' }}>PDF</button>
-                            </div>
-                        )}
+    // Render Dashboard Tab
+    const renderDashboard = () => (
+        <div className="dashboard-content">
+            <div className="stats-grid">
+                <div className="stat-card">
+                    <div className="stat-card-header">
+                        <div>
+                            <div className="stat-card-label">Total Forms</div>
+                            <div className="stat-card-value">{stats.totalForms}</div>
+                        </div>
+                        <div className="stat-card-icon primary">📋</div>
                     </div>
                 </div>
 
-                <div style={{ width: '100%', maxWidth: '1200px', overflowX: 'auto', padding: '0 1rem' }}>
-                    {submissions.length === 0 ? (
-                        <p style={{ textAlign: 'center', fontSize: '1.2rem', color: '#666' }}>No submissions yet.</p>
-                    ) : (
-                        <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <div className="stat-card">
+                    <div className="stat-card-header">
+                        <div>
+                            <div className="stat-card-label">Published Forms</div>
+                            <div className="stat-card-value">{stats.publishedForms}</div>
+                        </div>
+                        <div className="stat-card-icon success">✓</div>
+                    </div>
+                </div>
+
+                <div className="stat-card">
+                    <div className="stat-card-header">
+                        <div>
+                            <div className="stat-card-label">Total Submissions</div>
+                            <div className="stat-card-value">{stats.totalSubmissions}</div>
+                        </div>
+                        <div className="stat-card-icon warning">📊</div>
+                    </div>
+                </div>
+
+                <div className="stat-card">
+                    <div className="stat-card-header">
+                        <div>
+                            <div className="stat-card-label">Last 24 Hours</div>
+                            <div className="stat-card-value">{stats.recentSubmissions}</div>
+                        </div>
+                        <div className="stat-card-icon danger">🔥</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+                <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => navigate('/gsxi/create')}>
+                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: 600 }}>Create New Form</h3>
+                    <p style={{ margin: 0, color: 'var(--gray-600)', fontSize: '0.875rem' }}>Build a new job application form</p>
+                </div>
+
+                <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('forms')}>
+                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: 600 }}>Manage Forms</h3>
+                    <p style={{ margin: 0, color: 'var(--gray-600)', fontSize: '0.875rem' }}>Edit and publish your forms</p>
+                </div>
+
+                <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('submissions')}>
+                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: 600 }}>View Submissions</h3>
+                    <p style={{ margin: 0, color: 'var(--gray-600)', fontSize: '0.875rem' }}>Review and export applications</p>
+                </div>
+            </div>
+
+            {allSubmissions.length > 0 && (
+                <div className="table-container" style={{ marginTop: '2rem' }}>
+                    <div className="table-header">
+                        <h3 className="table-title">Recent Submissions</h3>
+                    </div>
+                    <div className="table-wrapper">
+                        <table className="modern-table">
                             <thead>
-                                <tr style={{ background: '#f1f5f9' }}>
-                                    <th style={{ padding: '1rem', textAlign: 'left', borderBottom: '2px solid #e2e8f0' }}>Date</th>
-                                    {selectedForm.fields.map(field => (
-                                        <th key={field.id} style={{ padding: '1rem', textAlign: 'left', borderBottom: '2px solid #e2e8f0', minWidth: '150px' }}>{field.label}</th>
-                                    ))}
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Form</th>
+                                    <th>Applicant</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {submissions.map(submission => (
-                                    <tr key={submission.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                        <td style={{ padding: '1rem' }}>{new Date(submission.submittedAt).toLocaleString()}</td>
-                                        {selectedForm.fields.map(field => (
-                                            <td key={field.id} style={{ padding: '1rem' }}>
-                                                {typeof submission.values[field.id] === 'object'
-                                                    ? JSON.stringify(submission.values[field.id])
-                                                    : String(submission.values[field.id] || '')}
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))}
+                                {allSubmissions.slice(0, 5).map(submission => {
+                                    const form = forms.find(f => f.id === submission.formId);
+                                    const nameField = form?.fields.find(f => f.label.toLowerCase().includes('name'));
+                                    const name = nameField ? submission.values[nameField.id] : 'N/A';
+
+                                    return (
+                                        <tr key={submission.id}>
+                                            <td>{new Date(submission.submittedAt).toLocaleString()}</td>
+                                            <td>{form?.name || 'Unknown'}</td>
+                                            <td>{String(name)}</td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+
+    // Render Forms Tab
+    const renderForms = () => (
+        <div className="dashboard-content">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 600 }}>All Forms</h2>
+                <button className="btn btn-primary" onClick={() => navigate('/gsxi/create')}>
+                    ➕ Create New Form
+                </button>
+            </div>
+
+            {forms.length === 0 ? (
+                <div className="empty-state">
+                    <div className="empty-state-icon">📋</div>
+                    <h3 className="empty-state-title">No forms yet</h3>
+                    <p className="empty-state-description">Create your first form to get started</p>
+                    <button className="btn btn-primary" onClick={() => navigate('/gsxi/create')}>
+                        Create Form
+                    </button>
+                </div>
+            ) : (
+                <div className="forms-grid">
+                    {forms.map(form => (
+                        <div key={form.id} className="form-card">
+                            <div className="form-card-header">
+                                <div>
+                                    <h3 className="form-card-title">{form.name}</h3>
+                                    <div className="form-card-meta">
+                                        <span className={`badge ${form.status === 'published' ? 'badge-published' : 'badge-unpublished'}`}>
+                                            {form.status}
+                                        </span>
+                                        <span>{new Date(form.createdAt).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {form.description && (
+                                <p style={{ fontSize: '0.875rem', color: 'var(--gray-600)', marginBottom: '1rem' }}>
+                                    {form.description.substring(0, 100)}{form.description.length > 100 ? '...' : ''}
+                                </p>
+                            )}
+
+                            <div className="form-card-actions">
+                                <button className="btn btn-sm btn-secondary" onClick={() => handleEditForm(form)}>
+                                    ✏️ Edit
+                                </button>
+                                <button className="btn btn-sm btn-secondary" onClick={() => window.open(`/form/${form.slug}`, '_blank')}>
+                                    👁️ View
+                                </button>
+                                <button
+                                    className={`btn btn-sm ${form.status === 'published' ? 'btn-secondary' : 'btn-success'}`}
+                                    onClick={() => handleToggleStatus(form)}
+                                >
+                                    {form.status === 'published' ? '📴 Unpublish' : '✅ Publish'}
+                                </button>
+                                <button className="btn btn-sm btn-danger" onClick={() => handleDeleteForm(form.id)}>
+                                    🗑️ Delete
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+
+    // Render Submissions Tab
+    const renderSubmissions = () => {
+        const selectedForm = getSelectedForm();
+
+        return (
+            <div className="dashboard-content">
+                <div className="table-container">
+                    <div className="table-header">
+                        <h3 className="table-title">Form Submissions</h3>
+                        <div className="table-controls">
+                            <select
+                                className="form-select"
+                                value={selectedFormId}
+                                onChange={(e) => setSelectedFormId(e.target.value)}
+                                style={{ minWidth: '250px' }}
+                            >
+                                <option value="">Select a form...</option>
+                                {forms.map(form => (
+                                    <option key={form.id} value={form.id}>
+                                        {form.name} ({allSubmissions.filter(s => s.formId === form.id).length})
+                                    </option>
+                                ))}
+                            </select>
+
+                            {selectedFormId && filteredSubmissions.length > 0 && (
+                                <div className="dropdown">
+                                    <button
+                                        className="btn btn-success"
+                                        onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                                    >
+                                        📥 Export
+                                    </button>
+                                    {exportMenuOpen && (
+                                        <div className="dropdown-menu">
+                                            <button className="dropdown-item" onClick={handleExportCSV}>CSV</button>
+                                            <button className="dropdown-item" onClick={handleExportExcel}>Excel</button>
+                                            <button className="dropdown-item" onClick={handleExportPDF}>PDF</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {!selectedFormId ? (
+                        <div className="empty-state">
+                            <div className="empty-state-icon">📊</div>
+                            <h3 className="empty-state-title">Select a form</h3>
+                            <p className="empty-state-description">Choose a form from the dropdown to view its submissions</p>
+                        </div>
+                    ) : filteredSubmissions.length === 0 ? (
+                        <div className="empty-state">
+                            <div className="empty-state-icon">📭</div>
+                            <h3 className="empty-state-title">No submissions yet</h3>
+                            <p className="empty-state-description">This form hasn't received any submissions</p>
+                        </div>
+                    ) : (
+                        <div className="table-wrapper">
+                            <table className="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        {selectedForm?.fields.map(field => (
+                                            <th key={field.id}>{field.label}</th>
+                                        ))}
+                                        <th style={{ textAlign: 'center' }}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredSubmissions.map(submission => (
+                                        <tr key={submission.id}>
+                                            <td>{new Date(submission.submittedAt).toLocaleString()}</td>
+                                            {selectedForm?.fields.map(field => (
+                                                <td key={field.id}>
+                                                    {typeof submission.values[field.id] === 'object'
+                                                        ? JSON.stringify(submission.values[field.id])
+                                                        : String(submission.values[field.id] || '')}
+                                                </td>
+                                            ))}
+                                            <td style={{ textAlign: 'center' }}>
+                                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                                                    <button
+                                                        className="btn btn-sm btn-secondary"
+                                                        onClick={() => handleViewSubmission(submission)}
+                                                    >
+                                                        👁️
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-sm btn-danger"
+                                                        onClick={() => handleDeleteSubmission(submission.id)}
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     )}
                 </div>
             </div>
         );
-    }
+    };
 
     return (
-        <div className="admin-home-page" style={{ justifyContent: 'flex-start' }}>
-            <div style={{ width: '100%', maxWidth: '900px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-                <button onClick={() => navigate('/gsxi')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}>← Back</button>
-                <h1 className="admin-title" style={{ margin: 0 }}>Select Form to View Submissions</h1>
-                <div style={{ width: '60px' }}></div>
+        <div className="admin-dashboard">
+            <div className="dashboard-header">
+                <div className="dashboard-title">
+                    <div className="dashboard-title-icon">🎯</div>
+                    Admin Dashboard
+                </div>
+                <div className="dashboard-actions">
+                    <button className="btn btn-secondary" onClick={() => navigate('/gsxi')}>
+                        ← Back to Home
+                    </button>
+                </div>
             </div>
 
-            <div style={{ width: '90%', maxWidth: '900px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1.5rem' }}>
-                {forms.map(form => (
-                    <div
-                        key={form.id}
-                        onClick={() => handleViewSubmissions(form)}
-                        style={{
-                            background: '#fff',
-                            padding: '2rem',
-                            borderRadius: '8px',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                            cursor: 'pointer',
-                            transition: 'transform 0.2s',
-                            border: '1px solid #e0e0e0'
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                    >
-                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.2rem' }}>{form.name}</h3>
-                        <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>
-                            View Responses
-                        </p>
-                    </div>
-                ))}
+            <div className="dashboard-tabs">
+                <button
+                    className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('dashboard')}
+                >
+                    📊 Dashboard
+                </button>
+                <button
+                    className={`tab-button ${activeTab === 'forms' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('forms')}
+                >
+                    📋 Forms
+                </button>
+                <button
+                    className={`tab-button ${activeTab === 'submissions' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('submissions')}
+                >
+                    📥 Submissions
+                </button>
             </div>
+
+            {activeTab === 'dashboard' && renderDashboard()}
+            {activeTab === 'forms' && renderForms()}
+            {activeTab === 'submissions' && renderSubmissions()}
+
+            {/* Edit Form Modal */}
+            {showEditModal && editingForm && (
+                <div className="modal-backdrop" onClick={() => setShowEditModal(false)}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px' }}>
+                        <div className="modal-header">
+                            <h3 className="modal-title">Edit Form Details</h3>
+                            <button className="modal-close" onClick={() => setShowEditModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                            {/* Basic Information */}
+                            <div style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '2px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>Basic Information</h4>
+                                <div className="form-group">
+                                    <label className="form-label">Form Name *</label>
+                                    <input
+                                        className="form-input"
+                                        value={editingForm.name}
+                                        onChange={(e) => setEditingForm({ ...editingForm, name: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Description</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        rows={3}
+                                        value={editingForm.description || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, description: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Job Details */}
+                            <div style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '2px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>Job Details</h4>
+                                <div className="form-group">
+                                    <label className="form-label">Job Type</label>
+                                    <select
+                                        className="form-select"
+                                        value={editingForm.jobType || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, jobType: e.target.value })}
+                                    >
+                                        <option value="">Select Type</option>
+                                        <option value="FULL TIME">Full Time</option>
+                                        <option value="PART TIME">Part Time</option>
+                                        <option value="INTERNSHIP">Internship</option>
+                                        <option value="CONTRACT">Contract</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Department</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., Engineering, Marketing"
+                                        value={editingForm.department || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, department: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Location</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., Remote, New York, Hybrid"
+                                        value={editingForm.location || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, location: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Experience Required</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., 0-1 years, Entry Level, 2-5 years"
+                                        value={editingForm.experience || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, experience: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Required Skills (comma-separated)</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., React, TypeScript, Node.js"
+                                        value={editingForm.skills?.join(', ') || ''}
+                                        onChange={(e) => setEditingForm({
+                                            ...editingForm,
+                                            skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                                        })}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Form Schedule */}
+                            <div style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '2px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>Form Schedule</h4>
+                                <div className="form-group">
+                                    <label className="form-label">Opening Date & Time</label>
+                                    <input
+                                        className="form-input"
+                                        type="datetime-local"
+                                        value={editingForm.openAt ? new Date(editingForm.openAt).toISOString().slice(0, 16) : ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, openAt: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Closing Date & Time</label>
+                                    <input
+                                        className="form-input"
+                                        type="datetime-local"
+                                        value={editingForm.closeAt ? new Date(editingForm.closeAt).toISOString().slice(0, 16) : ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, closeAt: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* SEO Metadata */}
+                            <div style={{ marginBottom: '1rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>SEO Metadata</h4>
+                                    <button
+                                        className="btn btn-sm btn-secondary"
+                                        onClick={() => {
+                                            const title = `${editingForm.name} at Global ServiceX | Apply Now`;
+                                            const description = `Join Global ServiceX as ${editingForm.name}. ${editingForm.description || 'Apply now for this exciting opportunity.'} ${editingForm.location ? `Location: ${editingForm.location}.` : ''} ${editingForm.experience ? `Experience: ${editingForm.experience}.` : ''}`.slice(0, 160);
+                                            const keywords = [
+                                                'Global ServiceX',
+                                                'careers',
+                                                editingForm.jobType?.toLowerCase() || 'job',
+                                                editingForm.department?.toLowerCase(),
+                                                ...(editingForm.skills || [])
+                                            ].filter((k): k is string => Boolean(k));
+
+                                            setEditingForm({
+                                                ...editingForm,
+                                                seoTitle: title,
+                                                seoDescription: description,
+                                                seoKeywords: keywords
+                                            });
+                                        }}
+                                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
+                                    >
+                                        ✨ Auto-Generate SEO
+                                    </button>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">SEO Title (60 chars max)</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., Software Engineer at Global ServiceX | Apply Now"
+                                        maxLength={60}
+                                        value={editingForm.seoTitle || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, seoTitle: e.target.value })}
+                                    />
+                                    <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                                        {(editingForm.seoTitle || '').length}/60 characters
+                                    </small>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">SEO Description (160 chars max)</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        rows={3}
+                                        placeholder="Brief description for search engines..."
+                                        maxLength={160}
+                                        value={editingForm.seoDescription || ''}
+                                        onChange={(e) => setEditingForm({ ...editingForm, seoDescription: e.target.value })}
+                                    />
+                                    <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                                        {(editingForm.seoDescription || '').length}/160 characters
+                                    </small>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">SEO Keywords (comma-separated)</label>
+                                    <input
+                                        className="form-input"
+                                        placeholder="e.g., global servicex, careers, software engineer"
+                                        value={editingForm.seoKeywords?.join(', ') || ''}
+                                        onChange={(e) => setEditingForm({
+                                            ...editingForm,
+                                            seoKeywords: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                                        })}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>
+                                Cancel
+                            </button>
+                            <button className="btn btn-primary" onClick={handleSaveForm}>
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* View Submission Modal */}
+            {viewingSubmission && (() => {
+                const selectedForm = forms.find(f => f.id === viewingSubmission.formId);
+                if (!selectedForm) return null;
+
+                return (
+                    <div className="modal-backdrop" onClick={() => setViewingSubmission(null)}>
+                        <div className="modal" onClick={(e) => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">Submission Details</h3>
+                                <button className="modal-close" onClick={() => setViewingSubmission(null)}>✕</button>
+                            </div>
+                            <div className="modal-body">
+                                <p style={{ marginBottom: '1.5rem', color: 'var(--gray-600)' }}>
+                                    Submitted: {new Date(viewingSubmission.submittedAt).toLocaleString()}
+                                </p>
+                                {selectedForm.fields.map((field) => (
+                                    <div key={field.id} className="form-group">
+                                        <label className="form-label">{field.label}</label>
+                                        <input
+                                            className="form-input"
+                                            value={editValues[field.id] || ''}
+                                            onChange={(e) => setEditValues({ ...editValues, [field.id]: e.target.value })}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="modal-footer">
+                                <button className="btn btn-secondary" onClick={() => setViewingSubmission(null)}>
+                                    Close
+                                </button>
+                                <button className="btn btn-primary" onClick={handleSaveSubmission}>
+                                    Save Changes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Confirm Dialog */}
+            <ConfirmDialog
+                isOpen={confirmDialog.isOpen}
+                title={confirmDialog.title}
+                message={confirmDialog.message}
+                type={confirmDialog.type}
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDialog.onConfirm}
+                onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+            />
         </div>
     );
 };

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import type { DraftFormState, FormField, PublishedForm, FormSubmission, FormTheme } from '../types';
 import { fieldTemplates, createFieldFromTemplate, buildSlug, formatDateTime } from '../utils/form';
 import { db } from '../services/db';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   loadDraft,
   loadSubmissions,
@@ -39,6 +40,21 @@ const BuilderPage = () => {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const titleRef = useRef<HTMLDivElement>(null);
   const descriptionRef = useRef<HTMLDivElement>(null);
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => { },
+    type: 'warning'
+  });
 
   const handleLogout = () => {
     localStorage.removeItem('admin_authenticated');
@@ -342,15 +358,22 @@ const BuilderPage = () => {
   };
 
   const handleDelete = async (formId: string) => {
-    if (window.confirm('Are you sure you want to delete this form?')) {
-      try {
-        await db.deleteForm(formId);
-        await refreshForms();
-      } catch (error) {
-        console.error('Failed to delete form:', error);
-        alert('Failed to delete form');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Form',
+      message: 'Are you sure you want to delete this form? This action cannot be undone.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        try {
+          await db.deleteForm(formId);
+          await refreshForms();
+        } catch (error) {
+          console.error('Failed to delete form:', error);
+          alert('Failed to delete form');
+        }
       }
-    }
+    });
   };
 
   const handleViewSubmissions = (form: PublishedForm) => {
@@ -1993,18 +2016,23 @@ const SubmissionsModal = ({
   };
 
   const handleDelete = async (submissionId: string) => {
-    if (!confirm('Are you sure you want to delete this submission? The user will be able to apply again.')) {
-      return;
-    }
-
-    try {
-      await db.deleteSubmission(submissionId);
-      setLocalSubmissions(localSubmissions.filter(s => s.id !== submissionId));
-      alert('Submission deleted successfully. User can now apply again.');
-    } catch (error) {
-      console.error('Failed to delete submission:', error);
-      alert('Failed to delete submission. Please try again.');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Submission',
+      message: 'Are you sure you want to delete this submission? The user will be able to apply again.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        try {
+          await db.deleteSubmission(submissionId);
+          setLocalSubmissions(localSubmissions.filter(s => s.id !== submissionId));
+          alert('Submission deleted successfully. User can now apply again.');
+        } catch (error) {
+          console.error('Failed to delete submission:', error);
+          alert('Failed to delete submission. Please try again.');
+        }
+      }
+    });
   };
 
   const handleEdit = (submission: FormSubmission) => {
@@ -2258,6 +2286,18 @@ const SubmissionsModal = ({
           </div>
         )
       }
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </>
   );
 };

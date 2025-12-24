@@ -2,12 +2,28 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
 import type { PublishedForm } from '../types';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import './AdminHomePage.css';
 
 const AdminFormsPage = () => {
     const navigate = useNavigate();
     const [forms, setForms] = useState<PublishedForm[]>([]);
     const [loading, setLoading] = useState(true);
+
+    // Confirm dialog state
+    const [confirmDialog, setConfirmDialog] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        type: 'danger' | 'warning' | 'info';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+        type: 'warning'
+    });
 
     const fetchForms = async () => {
         try {
@@ -37,15 +53,22 @@ const AdminFormsPage = () => {
     };
 
     const handleDelete = async (id: string) => {
-        if (window.confirm('Are you sure you want to delete this form?')) {
-            try {
-                await db.deleteForm(id);
-                await fetchForms();
-            } catch (error) {
-                console.error('Error deleting form:', error);
-                alert('Failed to delete form');
+        setConfirmDialog({
+            isOpen: true,
+            title: 'Delete Form',
+            message: 'Are you sure you want to delete this form? This action cannot be undone.',
+            type: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                try {
+                    await db.deleteForm(id);
+                    await fetchForms();
+                } catch (error) {
+                    console.error('Error deleting form:', error);
+                    alert('Failed to delete form');
+                }
             }
-        }
+        });
     };
 
     return (
@@ -109,6 +132,18 @@ const AdminFormsPage = () => {
                     ))
                 )}
             </div>
+
+            {/* Confirm Dialog */}
+            <ConfirmDialog
+                isOpen={confirmDialog.isOpen}
+                title={confirmDialog.title}
+                message={confirmDialog.message}
+                type={confirmDialog.type}
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDialog.onConfirm}
+                onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+            />
         </div>
     );
 };

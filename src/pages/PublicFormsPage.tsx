@@ -609,7 +609,25 @@ const FormFieldControl = ({
         <input
           {...baseProps}
           type="file"
-          onChange={(event) => onChange(event.target.files?.[0]?.name || '')}
+          accept=".pdf,.doc,.docx"
+          onChange={async (event) => {
+            const file = event.target.files?.[0];
+            if (file) {
+              // Show loading state
+              onChange('Uploading...');
+              try {
+                // Import upload function dynamically
+                const { uploadFile } = await import('../services/fileUpload');
+                const fileUrl = await uploadFile(file, 'resumes');
+                onChange(fileUrl);
+              } catch (error) {
+                console.error('Upload failed:', error);
+                alert('Failed to upload file. Please try again.');
+                onChange('');
+                event.target.value = '';
+              }
+            }
+          }}
         />
       );
       break;
